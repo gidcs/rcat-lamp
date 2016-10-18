@@ -25,16 +25,44 @@ function restart_service {
   fi
 }
 
-function add_tcp_port {
-  iptables -I INPUT -p tcp -m tcp --dport $1 -j ACCEPT
-  service iptables save
-  restart_service iptables
+function allow_incoming_tcp_port {
+  if [ "$iptables" = "y" ]; then
+    iptables -A INPUT -p tcp --dport $1 -j ACCEPT
+    iptables -A OUTPUT -p tcp --sport $1 -j ACCEPT
+    service iptables save
+  fi
 }
 
-function add_tcp_port_range {
-  iptables -I INPUT -p tcp --destination-port $1:$2 -j ACCEPT
-  service iptables save
-  restart_service iptables
+function allow_incoming_tcp_multiport {
+  if [ "$iptables" = "y" ]; then
+    iptables -A INPUT -p tcp -m multiport --dports $1 -j ACCEPT
+    iptables -A OUTPUT -p tcp -m multiport --sports $1 -j ACCEPT
+    service iptables save
+  fi
+}
+
+function allow_outgoing_tcp_port {
+  if [ "$iptables" = "y" ]; then
+    iptables -A OUTPUT -p tcp --dport $1 -j ACCEPT
+    iptables -A INPUT -p tcp --sport $1 -j ACCEPT
+    service iptables save
+  fi
+}
+
+function allow_outgoing_tcp_multiport {
+  if [ "$iptables" = "y" ]; then
+    iptables -A OUTPUT -p tcp -m multiport --dports $1 -j ACCEPT
+    iptables -A INPUT -p tcp -m multiport --sports $1 -j ACCEPT
+    service iptables save
+  fi
+}
+
+function allow_outgoing_udp_port {
+  if [ "$iptables" = "y" ]; then
+    iptables -A OUTPUT -p udp --dport $1 -j ACCEPT
+    iptables -A INPUT -p udp --sport $1 -j ACCEPT
+    service iptables save
+  fi
 }
 
 function root_check {
@@ -86,6 +114,19 @@ function prev_installation {
 }
 
 
+function ask_iptables {
+  if [ "$iptables" = "" ]; then
+    read -p "Flush and reapply iptables rules (n,y): " iptables
+    re='^[Nn]'
+    if [[ $iptables =~ $re ]]; then
+      echo "The iptables rules will not be applied!!"
+    else
+      iptables="y"
+      echo "The iptables rules will be applied!!"
+    fi
+  fi
+}
+
 function ask_servername {
   while [ "$servername" = "" ]
   do
@@ -106,7 +147,7 @@ function ask_adminemail {
   done
 }
 
-function ask_mysqlpassword {
+function ask_mysqlrootpwd {
   while [ "$mysqlrootpwd" = "" ]
   do
     read -p "MySQL Root Password: " mysqlrootpwd
@@ -143,8 +184,19 @@ function ask_information {
   #ask for some information
   ask_servername
   ask_adminemail
-  ask_mysqlpassword
+  ask_mysqlrootpwd
   ask_sshport
+  ask_iptables
+  clear
+  echoline
+  echo "Your Configuration"
+  echoline
+  echo "servername: "$servername
+  echo "adminemail: "$adminemail
+  echo "mysqlrootpwd: "$mysqlrootpwd
+  echo "sshport: "$sshport
+  echo "iptables: "$iptables
+  echoline
 }
 
 function change_hostname {
@@ -163,8 +215,16 @@ function change_hostname {
 
 function change_sshport {
   #change sshd port
-  sed -i 's/#Port 22/Port '$sshport'/g' /etc/ssh/sshd_config
-  add_tcp_port $sshport
+  if [ "$current_sshport" = "" ]; then
+    sed -i 's/#Port 22/Port '$sshport'/g' /etc/ssh/sshd_config
+  else
+    sed -i 's/Port '$current_sshport'/Port '$sshport'/g' /etc/ssh/sshd_config
+  fi
+  
+  allow_incoming_tcp_port $sshport
+  if [ "$iptables" = "y" ]; then
+    restart_service iptables
+  fi
   service sshd restart
   if [ "$?" -ne 0 ]; then
     echo "Error: sshd restart failed"
@@ -181,19 +241,80 @@ function install_epel-release {
 }
 
 function install_basic_env {
-  yum install unzip bzip2 gcc libcap libcap-devel expect openssl at vim screen -y
+  yum install unzip bzip2 gcc libcap libcap-devel expect openssl at vim screen git -y
 }
 
 function install_ntpd {
   yum install ntp -y
   service ntpd start
   chkconfig ntpd on
+  allow_outgoing_udp_port 123
 }
 
 function install_iptables {
-  yum install iptables -y
-  restart_service iptables
-  chkconfig iptables on
+  if [ "$iptables" = "y" ]; then
+    yum install iptables -y
+    
+    # Flushing all rules
+    iptables -P INPUT ACCEPT
+    iptables -P OUTPUT ACCEPT
+    iptables -F
+    
+    # make allow all current connections to make them stay online
+    iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    
+    # Allow current ssh port to make it stay online
+    current_sshport=`grep ^Port /etc/ssh/sshd_config | awk '{ print $2 }'`
+    if [ "$current_sshport" = "" ]; then
+      allow_incoming_tcp_port 22
+    else
+      allow_incoming_tcp_port $current_sshport
+    fi
+    
+    # Set Default Chain Policies
+    iptables -P INPUT DROP
+    iptables -P OUTPUT DROP
+    iptables -P FORWARD DROP
+    
+    # Prevent attack
+    iptables -A INPUT -p tcp --tcp-flags ALL NONE -j DROP
+    iptables -A INPUT -p tcp ! --syn -m state --state NEW -j DROP
+    iptables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
+    
+    # Drop Invalid Packets
+    iptables -A INPUT -m state --statestate --state INVALID -j DROP
+
+    # Allow Loopback Connections
+    iptables -A INPUT -i lo -j ACCEPT
+    iptables -A OUTPUT -o lo -j ACCEPT
+    
+    # Allow incoming ping
+    iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
+    iptables -A OUTPUT -p icmp --icmp-type echo-reply -j ACCEPT
+    
+     # Allow outgoing ping
+    iptables -A OUTPUT -p icmp --icmp-type echo-request -j ACCEPT
+    iptables -A INPUT -p icmp --icmp-type echo-reply -j ACCEPT
+
+    # Allow outgoing dns
+    allow_outgoing_tcp_port 53
+    allow_outgoing_udp_port 53
+    
+    # Allow outgoing traceroute
+    allow_outgoing_udp_port 33434:33523
+    
+    # Allow outgoing http/https, smtp/smtps, imap/imaps, pop3/pop3s, ftp/ftps
+    allow_outgoing_tcp_multiport 25,465,587
+    allow_outgoing_tcp_multiport 80,443
+    allow_outgoing_tcp_multiport 143,993
+    allow_outgoing_tcp_multiport 110,995
+    allow_outgoing_tcp_multiport 20,21
+    
+    
+    restart_service iptables
+    chkconfig iptables on
+  fi
 }
 
 function install_rcat_env {
@@ -274,7 +395,7 @@ function install_apache {
   cd -
   chown -R webapps:webapps /var/www/html/
   restart_service httpd
-  add_tcp_port 80
+  allow_incoming_tcp_multiport 80,443
 }
 
 function install_php {
@@ -344,7 +465,7 @@ function install_zend_guard_loader {
     echo "zend_extension=/usr/lib/php/modules/ZendGuardLoader.so" >> /etc/php.d/ZendGuard.ini
     echo "zend_loader.enable=1" >> /etc/php.d/ZendGuard.ini
   fi
-  rm -rf ZendGuardLoader*
+  rm -rf zend-loader-php5.6*
 }
 
 function install_mod-pagespeed {
@@ -393,8 +514,8 @@ function install_proftpd {
   sed -i -E "/DefaultRoot/a\
   PassivePorts 35000 35999" /etc/proftpd.conf
   restart_service proftpd
-  add_tcp_port_range 35000 35999
-  add_tcp_port 21
+  allow_incoming_tcp_port 35000:35999
+  allow_incoming_tcp_multiport 20,21
   chkconfig proftpd on 
 }
 
@@ -458,6 +579,7 @@ function start_installation {
   install_rc
   change_sshport
 }
+
 
 
 prev_installation
