@@ -283,7 +283,7 @@ function install_iptables {
     iptables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
     
     # Drop Invalid Packets
-    iptables -A INPUT -m state --statestate --state INVALID -j DROP
+    iptables -A INPUT -m state --state INVALID -j DROP
 
     # Allow Loopback Connections
     iptables -A INPUT -i lo -j ACCEPT
