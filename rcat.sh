@@ -203,8 +203,12 @@ function change_hostname {
   #change hostname
   sed -i '/HOSTNAME/d' /etc/sysconfig/network
   echo "HOSTNAME=$servername" >> /etc/sysconfig/network
-  echo "127.0.0.1 $servername" >> /etc/hosts
+  echo "$servername" > /etc/hostname
+  ip=`ifconfig | grep 'inet ' | grep -v 127.0.0.1 | awk -F':' '{ print $2 }' | awk '{ print $1 }' | head`
+  sed -i '/'$servername'/d' /etc/sysconfig/network
+  echo "$ip $servername" >> /etc/hosts
   hostname $servername
+  sysctl kernel.hostname=$servername
   service network restart
   if [ "$?" -ne 0 ]; then
     echo "Error: network restart failed"
@@ -416,6 +420,7 @@ function install_php {
   sed -i 's/post_max_size = 8M/post_max_size = 50M/g' /etc/php.ini
   sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 50M/g' /etc/php.ini
   sed -i 's/max_execution_time = 30/max_execution_time = 300/g' /etc/php.ini
+  rm -rf latest.rpm
 }
 
 function install_mod_ruid2 {
