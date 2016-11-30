@@ -398,6 +398,7 @@ function install_apache {
   rm -f default.zip;
   cd -
   chown -R webapps:webapps /var/www/html/
+  chkconfig httpd on
   restart_service httpd
   allow_incoming_tcp_multiport 80,443
 }
@@ -440,7 +441,7 @@ function install_ioncube {
     tar xzvf ioncube_loaders_lin_x86-64.tar.gz
     PHP_VERSION="`php -r "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;"`"
     cp "ioncube/ioncube_loader_lin_${PHP_VERSION}.so" /usr/lib64/php/modules
-    echo "; Enable ioncube loader" >> /etc/php.d/ZendGuard.ini
+    echo "; Enable ioncube loader" > /etc/php.d/ZendGuard.ini
     echo " zend_extension=/usr/lib64/php/modules/ioncube_loader_lin_${PHP_VERSION}.so" >> /etc/php.d/ZendGuard.ini
   else
     wget_file ioncube_loaders_lin_x86.tar.gz http://downloads3.ioncube.com/loader_downloads/ioncube_loaders_lin_x86.tar.gz
@@ -489,7 +490,8 @@ function install_mod-pagespeed {
 function install_phpmyadmin {
   #install phpmyadmin
   wget_file phpMyAdmin.zip https://files.phpmyadmin.net/phpMyAdmin/4.6.4/phpMyAdmin-4.6.4-all-languages.zip
-  unzip phpMyAdmin.zip
+  unzip -o phpMyAdmin.zip
+  rm -rf /home/phpMyAdmin
   mv phpMyAdmin-* /home/phpMyAdmin
   rm -f phpMyAdmin.zip
   \cp /etc/rcat/config.inc.php /home/phpMyAdmin/config.inc.php

@@ -12,7 +12,7 @@ Why I need it
 Supported System
 -------
 
-- CentOS 6
+- CentOS 6 (selinux disabled)
 
 Software will be installed
 -------
@@ -33,10 +33,10 @@ Installation
 -------
 
 ```
-yum install wget -y
+sudo yum install wget -y
 wget -O rcat.sh https://raw.githubusercontent.com/gidcs/rcat-lamp/master/rcat.sh
 chmod 755 rcat.sh
-./rcat.sh
+sudo ./rcat.sh
 ```
 
 License
